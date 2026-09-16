@@ -1,0 +1,28 @@
+{
+  "report_month": "2026-09",
+  "policy_file": "config/report_policy.json",
+  "workbook": "inputs/current/Projected State Use-SEP26.xlsx",
+
+  "scenarios": {
+    "Most": {
+      "enabled": true,
+      "model": "inputs/current/CRMMS_v5.1.24month_SEP2026_MOST_6MAF.mdl.gz"
+    },
+
+    "Min": {
+      "enabled": true,
+      "model": "inputs/current/CRMMS_v5.1.24month_SEP2026_MIN.mdl.gz"
+    },
+
+    "Max": {
+      "enabled": false,
+      "model": "inputs/current/CRMMS_SEP2026_MAX.mdl.gz"
+    }
+  },
+
+  "options": {
+    "fail_on_warnings": false,
+    "create_batch_zip": true,
+    "validate_report_month_against_model_start": true
+  }
+}

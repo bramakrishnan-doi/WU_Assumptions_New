@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lower Basin Water Use Report Generator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div>
+        <p class="eyebrow">RiverWare reporting utility</p>
+        <h1>Lower Basin Water Use Report Generator</h1>
+        <p class="header-copy">Validate the monthly Projected State Use workbook and one or more RiverWare scenarios, review source traceability, then generate consistent Word reports.</p>
+      </div>
+      <button type="button" class="policy-chip policy-button" id="rulesButton" title="View the active report rules">Rules {{ policy_version }} <span class="policy-view">View</span></button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="workspace">
+      <div class="step-card" id="sourceStep">
+        <div class="step-heading">
+          <span class="step-number">1</span>
+          <div><h2>Source files</h2><p>Use the current monthly workbook and assign each model to its scenario.</p></div>
+        </div>
+
+        <div class="field-block">
+          <label class="field-label" for="excelFile">Projected State Use workbook</label>
+          <label class="drop-zone" id="excelDrop" for="excelFile">
+            <input type="file" id="excelFile" accept=".xlsx" hidden>
+            <span class="drop-icon">XLSX</span>
+            <span><strong id="excelName">Choose the current monthly workbook</strong><small>Excel .xlsx</small></span>
+          </label>
+        </div>
+
+        <div class="scenario-grid">
+          {% for scenario in scenarios %}
+          <article class="scenario-card {% if scenario.key in default_enabled_scenarios %}enabled{% endif %}" data-scenario="{{ scenario.key }}" data-label="{{ scenario.display_name }}">
+            <div class="scenario-top">
+              <div>
+                <span class="scenario-kicker">Scenario</span>
+                <h3>{{ scenario.display_name }}</h3>
+              </div>
+              <label class="toggle-wrap" title="Include or exclude this scenario">
+                <span class="toggle-label">Include</span>
+                <span class="toggle">
+                  <input type="checkbox" class="scenario-enabled" data-scenario="{{ scenario.key }}" {% if scenario.key in default_enabled_scenarios %}checked{% endif %}>
+                  <span></span>
+                </span>
+              </label>
+            </div>
+            <label class="model-picker" for="model{{ scenario.key }}">
+              <input type="file" id="model{{ scenario.key }}" class="model-file" data-scenario="{{ scenario.key }}" accept=".mdl,.gz,.mdl.gz" hidden>
+              <span class="model-name" id="model{{ scenario.key }}Name">Choose {{ scenario.display_name }} model</span>
+              <small>{% if scenario.key in default_enabled_scenarios %}.mdl or .mdl.gz{% else %}Optional - choosing a file automatically includes this scenario{% endif %}</small>
+            </label>
+          </article>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-heading">
+          <span class="step-number">2</span>
+          <div><h2>Report details</h2><p>Select the study month used in the report subtitle and output filename.</p></div>
+        </div>
+        <div class="details-grid single">
+          <div>
+            <label class="field-label" for="studyMonth">24-Month Study month</label>
+            <input class="text-input" id="studyMonth" type="month">
+          </div>
+        </div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-heading">
+          <span class="step-number">3</span>
+          <div><h2>Preflight</h2><p>Parse and validate all selected inputs before report generation.</p></div>
+        </div>
+        <div class="action-row">
+          <button class="btn primary" id="preflightBtn">Run preflight</button>
+          <span class="muted" id="preflightHint">No files have been validated yet.</span>
+        </div>
+        <div id="preflightPanel" class="preflight-panel hidden" aria-live="polite"></div>
+      </div>
+
+      <div class="step-card">
+        <div class="step-heading">
+          <span class="step-number">4</span>
+          <div><h2>Generate &amp; review</h2><p>The preview is read-only. Use <strong>Source</strong> beside a value to trace where it came from.</p></div>
+        </div>
+        <div class="action-row">
+          <button class="btn primary" id="generateBtn" disabled>Generate report(s)</button>
+          <button class="btn secondary hidden" id="downloadAllBtn">Download batch ZIP</button>
+          <span class="muted" id="generateHint">Complete a successful preflight first.</span>
+        </div>
+        <div id="reportTabs" class="report-tabs hidden"></div>
+        <div id="reportActions" class="report-actions hidden"></div>
+        <div id="previewHost" class="preview-host hidden"></div>
+      </div>
+    </section>
+
+    <aside class="status-rail">
+      <div class="status-card">
+        <h2>Run status</h2>
+        <div class="status-line"><span id="statusDot" class="status-dot idle"></span><span id="statusText">Ready for inputs</span></div>
+        <ol class="stage-list" id="stageList">
+          <li data-stage="files">Files selected</li>
+          <li data-stage="preflight">Sources validated</li>
+          <li data-stage="generation">Reports generated</li>
+        </ol>
+      </div>
+      <div class="status-card compact">
+        <h2>What preflight checks</h2>
+        <p>Model study dates, all configured RiverWare slots, workbook year sheets and cached values, scenario-specific Excel blocks, scenario filename clues, and conservation summary availability.</p>
+      </div>
+    </aside>
+  </main>
+
+  <div id="sourceDrawer" class="drawer" aria-hidden="true">
+    <button class="drawer-backdrop" data-close-drawer aria-label="Close source details"></button>
+    <aside class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">
+      <div class="drawer-head"><div><p class="eyebrow">Traceability</p><h2 id="sourceTitle">Value source</h2></div><button class="icon-btn" data-close-drawer aria-label="Close">×</button></div>
+      <div id="sourceContent" class="source-content"></div>
+    </aside>
+  </div>
+
+  <div id="rulesDrawer" class="drawer" aria-hidden="true">
+    <button class="drawer-backdrop" data-close-rules aria-label="Close report rules"></button>
+    <aside class="drawer-panel rules-panel" role="dialog" aria-modal="true" aria-labelledby="rulesTitle">
+      <div class="drawer-head"><div><p class="eyebrow">Active configuration</p><h2 id="rulesTitle">Report rules</h2></div><button class="icon-btn" data-close-rules aria-label="Close">×</button></div>
+      <div id="rulesContent" class="rules-content"><p class="muted">Loading active rules…</p></div>
+    </aside>
+  </div>
+
+  <script>
+    window.WU_APP = { policyVersion: {{ policy_version|tojson }} };
+  </script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

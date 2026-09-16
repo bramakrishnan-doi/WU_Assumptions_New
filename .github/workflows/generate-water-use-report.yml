@@ -1,0 +1,70 @@
+name: Generate Water Use Assumptions
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Monthly run configuration file
+        required: true
+        default: config/monthly_run.json
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    name: Validate and generate reports
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Run regression tests
+        shell: pwsh
+        run: |
+          python -m pytest -q
+
+      - name: Generate monthly reports
+        shell: pwsh
+        run: |
+          python generate_report.py `
+            --config "${{ inputs.config }}" `
+            --output-dir output
+
+      - name: Add run summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "output/run_summary.md") {
+            Get-Content "output/run_summary.md" |
+              Out-File `
+                -FilePath $env:GITHUB_STEP_SUMMARY `
+                -Append `
+                -Encoding utf8
+          }
+
+      - name: Upload generated reports
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: water-use-assumptions-${{ github.run_number }}
+          path: output/
+          if-no-files-found: error
+          retention-days: 90
