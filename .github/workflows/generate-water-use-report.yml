@@ -10,7 +10,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate:
@@ -39,32 +39,82 @@ jobs:
       - name: Run regression tests
         shell: pwsh
         run: |
-          python -m pytest -q
+          python -m pytest -q tests
+
+      - name: Read report month
+        shell: pwsh
+        run: |
+          $config = Get-Content "${{ inputs.config }}" -Raw | ConvertFrom-Json
+          $reportMonth = $config.report_month
+
+          if (-not $reportMonth) {
+            throw "report_month was not found in the monthly configuration."
+          }
+
+          "REPORT_MONTH=$reportMonth" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+
+          $reportDir = "reports/$reportMonth"
+
+          "REPORT_DIR=$reportDir" | Out-File `
+            -FilePath $env:GITHUB_ENV `
+            -Encoding utf8 `
+            -Append
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $reportDir | Out-Null
+
+          Write-Host "Reports will be written to $reportDir"
 
       - name: Generate monthly reports
         shell: pwsh
         run: |
           python generate_report.py `
             --config "${{ inputs.config }}" `
-            --output-dir output
+            --output-dir "$env:REPORT_DIR"
 
       - name: Add run summary
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path "output/run_summary.md") {
-            Get-Content "output/run_summary.md" |
+          $summary = "$env:REPORT_DIR/run_summary.md"
+
+          if (Test-Path $summary) {
+            Get-Content $summary |
               Out-File `
                 -FilePath $env:GITHUB_STEP_SUMMARY `
                 -Append `
                 -Encoding utf8
           }
 
-      - name: Upload generated reports
+      - name: Commit generated Word reports
+        if: success()
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- "$env:REPORT_DIR/*.docx"
+
+          git diff --cached --quiet
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "No report changes to commit."
+          }
+          else {
+            git commit -m "Add Water Use assumptions reports for $env:REPORT_MONTH"
+            git push
+          }
+
+      - name: Upload generated reports as artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: water-use-assumptions-${{ github.run_number }}
-          path: output/
+          name: water-use-assumptions-${{ env.REPORT_MONTH }}
+          path: ${{ env.REPORT_DIR }}/*.docx
           if-no-files-found: error
           retention-days: 90
