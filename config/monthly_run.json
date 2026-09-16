@@ -22,7 +22,7 @@
 
   "options": {
     "fail_on_warnings": false,
-    "create_batch_zip": true,
+    "create_batch_zip": false,
     "validate_report_month_against_model_start": true
   }
 }
