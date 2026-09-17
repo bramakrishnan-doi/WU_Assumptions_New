@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,80 +45,130 @@ jobs:
       - name: Read report month
         shell: pwsh
         run: |
-          $config = Get-Content "${{ inputs.config }}" -Raw | ConvertFrom-Json
+          $configPath = "${{ inputs.config }}"
+
+          if (-not (Test-Path $configPath)) {
+            throw "Configuration file was not found: $configPath"
+          }
+
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
           $reportMonth = $config.report_month
 
           if (-not $reportMonth) {
-            throw "report_month was not found in the monthly configuration."
+            throw "report_month was not found in $configPath"
           }
 
-          "REPORT_MONTH=$reportMonth" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
+          if ($reportMonth -notmatch '^\d{4}-\d{2}$') {
+            throw "report_month must use YYYY-MM format. Found: $reportMonth"
+          }
 
           $reportDir = "reports/$reportMonth"
 
-          "REPORT_DIR=$reportDir" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
+          "REPORT_MONTH=$reportMonth" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "REPORT_DIR=$reportDir" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
 
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path $reportDir | Out-Null
+            -Path $reportDir |
+            Out-Null
 
-          Write-Host "Reports will be written to $reportDir"
+          Write-Host "Report month: $reportMonth"
+          Write-Host "Report directory: $reportDir"
 
       - name: Generate monthly reports
         shell: pwsh
         run: |
+          Write-Host "Generating reports into $env:REPORT_DIR"
+
           python generate_report.py `
             --config "${{ inputs.config }}" `
             --output-dir "$env:REPORT_DIR"
+
+      - name: Verify generated reports
+        shell: pwsh
+        run: |
+          Write-Host "Contents of report directory:"
+          Get-ChildItem `
+            -Path "$env:REPORT_DIR" `
+            -Recurse
+
+          $docxFiles = @(
+            Get-ChildItem `
+              -Path "$env:REPORT_DIR" `
+              -Filter "*.docx" `
+              -File
+          )
+
+          Write-Host "DOCX files found: $($docxFiles.Count)"
+
+          if ($docxFiles.Count -eq 0) {
+            throw "No generated Word documents were found in $env:REPORT_DIR"
+          }
+
+          foreach ($file in $docxFiles) {
+            Write-Host "Generated: $($file.Name)"
+          }
 
       - name: Add run summary
         if: always()
         shell: pwsh
         run: |
-          $summary = "$env:REPORT_DIR/run_summary.md"
+          $summaryPath = "$env:REPORT_DIR/run_summary.md"
 
-          if (Test-Path $summary) {
-            Get-Content $summary |
+          if (Test-Path $summaryPath) {
+            Get-Content $summaryPath |
               Out-File `
                 -FilePath $env:GITHUB_STEP_SUMMARY `
                 -Append `
                 -Encoding utf8
           }
+          else {
+            Write-Host "No run_summary.md file was found."
+          }
 
-            - name: Commit generated Word reports
+      - name: Commit generated Word reports
         if: success()
         shell: pwsh
         run: |
-          Write-Host "Report directory: $env:REPORT_DIR"
-          Write-Host "Current branch: ${{ github.ref_name }}"
-
-          Write-Host "Files generated:"
-          Get-ChildItem -Path "$env:REPORT_DIR" -Recurse
-
-          $docxFiles = Get-ChildItem `
-            -Path "$env:REPORT_DIR" `
-            -Filter "*.docx" `
-            -File
-
-          if ($docxFiles.Count -eq 0) {
-            throw "No generated DOCX files were found in $env:REPORT_DIR"
-          }
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          foreach ($file in $docxFiles) {
-            Write-Host "Staging $($file.FullName)"
-            git add -f -- "$($file.FullName)"
+          $docxFiles = @(
+            Get-ChildItem `
+              -Path "$env:REPORT_DIR" `
+              -Filter "*.docx" `
+              -File
+          )
+
+          if ($docxFiles.Count -eq 0) {
+            throw "No generated DOCX files are available to commit."
           }
 
+          foreach ($file in $docxFiles) {
+            $relativePath = $file.FullName.Substring(
+              $env:GITHUB_WORKSPACE.Length + 1
+            ).Replace('\', '/')
+
+            Write-Host "Staging: $relativePath"
+
+            git add -f -- "$relativePath"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "git add failed for $relativePath"
+            }
+          }
+
+          Write-Host ""
           Write-Host "Git status after staging:"
           git status --short
 
@@ -127,16 +178,41 @@ jobs:
             Write-Host "No report changes to commit."
           }
           else {
-            git commit -m "Add Water Use assumptions reports for $env:REPORT_MONTH"
+            Write-Host "Creating report commit..."
+
+            git commit `
+              -m "Add Water Use assumptions reports for $env:REPORT_MONTH"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "git commit failed."
+            }
+
+            Write-Host "Pushing report commit to branch: ${{ github.ref_name }}"
 
             git push origin "HEAD:${{ github.ref_name }}"
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "git push failed."
+            }
           }
+
+      - name: Verify report commit
+        if: success()
+        shell: pwsh
+        run: |
+          Write-Host "Latest commit:"
+          git log -1 --oneline
+
+          Write-Host ""
+          Write-Host "Tracked report files:"
+          git ls-files reports
 
       - name: Upload generated reports as artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: water-use-assumptions-${{ env.REPORT_MONTH }}
-          path: ${{ env.REPORT_DIR }}/*.docx
+          name: water-use-assumptions-${{ github.run_number }}
+          path: |
+            reports/**/*.docx
           if-no-files-found: error
           retention-days: 90
