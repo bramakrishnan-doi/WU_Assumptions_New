@@ -91,14 +91,35 @@ jobs:
                 -Encoding utf8
           }
 
-      - name: Commit generated Word reports
+            - name: Commit generated Word reports
         if: success()
         shell: pwsh
         run: |
+          Write-Host "Report directory: $env:REPORT_DIR"
+          Write-Host "Current branch: ${{ github.ref_name }}"
+
+          Write-Host "Files generated:"
+          Get-ChildItem -Path "$env:REPORT_DIR" -Recurse
+
+          $docxFiles = Get-ChildItem `
+            -Path "$env:REPORT_DIR" `
+            -Filter "*.docx" `
+            -File
+
+          if ($docxFiles.Count -eq 0) {
+            throw "No generated DOCX files were found in $env:REPORT_DIR"
+          }
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -- "$env:REPORT_DIR/*.docx"
+          foreach ($file in $docxFiles) {
+            Write-Host "Staging $($file.FullName)"
+            git add -f -- "$($file.FullName)"
+          }
+
+          Write-Host "Git status after staging:"
+          git status --short
 
           git diff --cached --quiet
 
@@ -107,7 +128,8 @@ jobs:
           }
           else {
             git commit -m "Add Water Use assumptions reports for $env:REPORT_MONTH"
-            git push
+
+            git push origin "HEAD:${{ github.ref_name }}"
           }
 
       - name: Upload generated reports as artifact
